@@ -1,141 +1,217 @@
-import { redirect } from "next/navigation"
-import { getUserSession } from "@/lib/session"
-import { HeaderWrapper } from "@/components/header-wrapper"
-import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card"
-import { Button } from "@/components/ui/button"
-import Link from "next/link"
-import { format } from "date-fns"
-import { MpesaPaymentForm } from "@/components/mpesa-payment-form" // Import the new component
+"use client"
 
-async function getInvoiceDetails(id: string) {
-  const res = await fetch(`${process.env.NEXT_PUBLIC_APP_URL}/api/invoices/${id}`, {
-    headers: {
-      Cookie: `auth_token=${await (await import("next/headers")).cookies().get("auth_token")?.value}`,
-    },
-    cache: "no-store",
-  })
-  if (!res.ok) {
-    throw new Error(`Failed to fetch invoice: ${res.statusText}`)
-  }
-  return res.json()
+import { sql } from "@/lib/db"
+import { getUserSession } from "@/lib/session"
+import { notFound, redirect } from "next/navigation"
+import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card"
+import { Button } from "@/components/ui/button"
+import { format } from "date-fns"
+import { FlutterwavePaymentForm } from "@/components/flutterwave-payment-form"
+import { MpesaPaymentForm } from "@/components/mpesa-payment-form"
+
+interface InvoiceItem {
+  item_name: string
+  quantity: number
+  unit_price: number
+  total_price: number
 }
 
 export default async function ClientInvoiceDetailPage({ params }: { params: { id: string } }) {
   const session = await getUserSession()
-
-  if (!session || session.userRole !== "client") {
+  if (!session) {
     redirect("/login")
   }
 
-  let invoice = null
-  let error = ""
-  try {
-    invoice = await getInvoiceDetails(params.id)
-    // Additional client-side check to ensure the invoice belongs to the user
-    if (invoice && invoice.user_id !== session.userId) {
-      redirect("/client/invoices") // Redirect if trying to access another user's invoice
-    }
-  } catch (err: any) {
-    console.error("Error fetching invoice details:", err)
-    error = err.message || "Could not load invoice details."
+  const invoiceId = params.id
+
+  const [invoice] = await sql`
+    SELECT
+      i.id,
+      i.user_id,
+      i.quote_id,
+      i.invoice_number,
+      i.issue_date,
+      i.due_date,
+      i.total_amount,
+      i.status,
+      i.created_at,
+      i.updated_at,
+      u.email AS client_email,
+      u.name AS client_name
+    FROM invoices i
+    JOIN users u ON i.user_id = u.id
+    WHERE i.id = ${invoiceId}
+  `
+
+  if (!invoice || (session.userRole !== "admin" && invoice.user_id !== session.userId)) {
+    notFound()
   }
 
-  if (!invoice && !error) {
-    return (
-      <div className="flex min-h-screen flex-col">
-        <HeaderWrapper />
-        <main className="flex-1 p-4 md:p-8">
-          <div className="container mx-auto">
-            <h1 className="text-3xl font-bold mb-6">Invoice Details</h1>
-            <p>Loading invoice...</p>
-          </div>
-        </main>
-      </div>
-    )
+  const invoiceItems: InvoiceItem[] = await sql`
+    SELECT
+      item_name,
+      quantity,
+      unit_price,
+      total_price
+    FROM invoice_items
+    WHERE invoice_id = ${invoiceId}
+    ORDER BY created_at ASC
+  `
+
+  // Fetch Flutterwave public key on the server
+  let flutterwavePublicKey = ""
+  try {
+    const res = await fetch(`${process.env.NEXT_PUBLIC_APP_URL}/api/config/flutterwave-public-key`, {
+      cache: "no-store", // Ensure it's always fresh
+    })
+    if (res.ok) {
+      const data = await res.json()
+      flutterwavePublicKey = data.publicKey
+    } else {
+      console.error("Failed to fetch Flutterwave public key:", res.status, res.statusText)
+    }
+  } catch (error) {
+    console.error("Error fetching Flutterwave public key:", error)
   }
 
   return (
-    <div className="flex min-h-screen flex-col">
-      <HeaderWrapper />
-      <main className="flex-1 p-4 md:p-8">
-        <div className="container mx-auto">
-          <div className="flex items-center justify-between mb-6">
-            <h1 className="text-3xl font-bold">Invoice Details: {invoice?.invoice_number}</h1>
-            <Button asChild variant="outline">
-              <Link href="/client/invoices">Back to Invoices</Link>
+    <main className="flex flex-1 flex-col p-4 md:p-6">
+      <div className="flex items-center justify-between mb-6">
+        <h1 className="text-2xl font-semibold">Invoice #{invoice.invoice_number}</h1>
+        <div className="flex items-center gap-2">
+          <span
+            className={`px-3 py-1 rounded-full text-sm font-medium ${
+              invoice.status === "paid"
+                ? "bg-green-100 text-green-800"
+                : invoice.status === "partially_paid"
+                  ? "bg-yellow-100 text-yellow-800"
+                  : "bg-red-100 text-red-800"
+            }`}
+          >
+            {invoice.status.replace(/_/g, " ")}
+          </span>
+          {session.userRole === "admin" && (
+            <Button variant="outline" onClick={() => (window.location.href = `/admin/invoices/${invoice.id}/edit`)}>
+              Edit Invoice
             </Button>
-          </div>
-          {error ? (
-            <p className="text-red-500">{error}</p>
-          ) : invoice ? (
-            <div className="grid grid-cols-1 lg:grid-cols-3 gap-6">
-              <div className="lg:col-span-2">
-                <Card>
-                  <CardHeader>
-                    <CardTitle>Invoice #{invoice.invoice_number}</CardTitle>
-                    <CardDescription>Issued on {format(new Date(invoice.issue_date), "PPP")}</CardDescription>
-                  </CardHeader>
-                  <CardContent className="grid gap-4">
-                    <div className="grid grid-cols-2 gap-2">
-                      <div>
-                        <p className="text-sm text-muted-foreground">Total Amount</p>
-                        <p className="text-lg font-semibold">${invoice.total_amount.toFixed(2)}</p>
-                      </div>
-                      <div>
-                        <p className="text-sm text-muted-foreground">Status</p>
-                        <p className="text-lg font-semibold">
-                          <span
-                            className={`px-2 py-1 rounded-full text-sm font-semibold ${
-                              invoice.status === "paid"
-                                ? "bg-green-100 text-green-800"
-                                : invoice.status === "sent"
-                                  ? "bg-blue-100 text-blue-800"
-                                  : invoice.status === "overdue"
-                                    ? "bg-red-100 text-red-800"
-                                    : "bg-gray-100 text-gray-800"
-                            }`}
-                          >
-                            {invoice.status.charAt(0).toUpperCase() + invoice.status.slice(1)}
-                          </span>
-                        </p>
-                      </div>
-                    </div>
-                    {invoice.due_date && (
-                      <div>
-                        <p className="text-sm text-muted-foreground">Due Date</p>
-                        <p className="text-lg font-semibold">{format(new Date(invoice.due_date), "PPP")}</p>
-                      </div>
-                    )}
-                    <div>
-                      <p className="text-sm text-muted-foreground">Client ID</p>
-                      <p className="text-lg font-semibold">{invoice.user_id}</p>
-                    </div>
-                    {/* Add more invoice details here as needed */}
-                  </CardContent>
-                </Card>
-              </div>
-              {invoice.status !== "paid" && ( // Only show payment form if invoice is not paid
-                <div>
-                  <MpesaPaymentForm invoiceId={invoice.id} amount={Number.parseFloat(invoice.total_amount)} />
-                </div>
-              )}
-            </div>
-          ) : (
-            <p className="text-red-500">Invoice not found.</p>
           )}
         </div>
-      </main>
-      <footer className="flex flex-col gap-2 sm:flex-row py-6 w-full shrink-0 items-center px-4 md:px-6 border-t">
-        <p className="text-xs text-muted-foreground">&copy; 2024 AfricorexCrm. All rights reserved.</p>
-        <nav className="sm:ml-auto flex gap-4 sm:gap-6">
-          <Link href="#" className="text-xs hover:underline underline-offset-4" prefetch={false}>
-            Terms of Service
-          </Link>
-          <Link href="#" className="text-xs hover:underline underline-offset-4" prefetch={false}>
-            Privacy
-          </Link>
-        </nav>
-      </footer>
-    </div>
+      </div>
+
+      <div className="grid gap-6 md:grid-cols-2 lg:grid-cols-3">
+        <Card>
+          <CardHeader>
+            <CardTitle>Invoice Details</CardTitle>
+          </CardHeader>
+          <CardContent className="grid gap-2 text-sm">
+            <div className="flex justify-between">
+              <span>Invoice Number:</span>
+              <span className="font-medium">{invoice.invoice_number}</span>
+            </div>
+            <div className="flex justify-between">
+              <span>Issue Date:</span>
+              <span className="font-medium">{format(new Date(invoice.issue_date), "PPP")}</span>
+            </div>
+            <div className="flex justify-between">
+              <span>Due Date:</span>
+              <span className="font-medium">{format(new Date(invoice.due_date), "PPP")}</span>
+            </div>
+            <div className="flex justify-between">
+              <span>Total Amount:</span>
+              <span className="font-medium">KES {invoice.total_amount.toLocaleString()}</span>
+            </div>
+            <div className="flex justify-between">
+              <span>Client:</span>
+              <span className="font-medium">
+                {invoice.client_name} ({invoice.client_email})
+              </span>
+            </div>
+          </CardContent>
+        </Card>
+
+        <Card className="md:col-span-2">
+          <CardHeader>
+            <CardTitle>Items</CardTitle>
+          </CardHeader>
+          <CardContent>
+            <div className="overflow-x-auto">
+              <table className="w-full text-sm text-left text-gray-500 dark:text-gray-400">
+                <thead className="text-xs text-gray-700 uppercase bg-gray-50 dark:bg-gray-700 dark:text-gray-400">
+                  <tr>
+                    <th scope="col" className="px-6 py-3">
+                      Item
+                    </th>
+                    <th scope="col" className="px-6 py-3 text-right">
+                      Quantity
+                    </th>
+                    <th scope="col" className="px-6 py-3 text-right">
+                      Unit Price
+                    </th>
+                    <th scope="col" className="px-6 py-3 text-right">
+                      Total
+                    </th>
+                  </tr>
+                </thead>
+                <tbody>
+                  {invoiceItems.map((item, index) => (
+                    <tr key={index} className="bg-white border-b dark:bg-gray-800 dark:border-gray-700">
+                      <td className="px-6 py-4 font-medium text-gray-900 whitespace-nowrap dark:text-white">
+                        {item.item_name}
+                      </td>
+                      <td className="px-6 py-4 text-right">{item.quantity}</td>
+                      <td className="px-6 py-4 text-right">KES {item.unit_price.toLocaleString()}</td>
+                      <td className="px-6 py-4 text-right">KES {item.total_price.toLocaleString()}</td>
+                    </tr>
+                  ))}
+                </tbody>
+                <tfoot>
+                  <tr className="font-semibold text-gray-900 dark:text-white">
+                    <th scope="row" colSpan={3} className="px-6 py-3 text-right">
+                      Total
+                    </th>
+                    <td className="px-6 py-3 text-right">KES {invoice.total_amount.toLocaleString()}</td>
+                  </tr>
+                </tfoot>
+              </table>
+            </div>
+          </CardContent>
+        </Card>
+
+        {invoice.status !== "paid" && (
+          <>
+            <Card>
+              <CardHeader>
+                <CardTitle>Pay with M-Pesa</CardTitle>
+              </CardHeader>
+              <CardContent>
+                <MpesaPaymentForm
+                  invoiceId={invoice.id}
+                  amount={invoice.total_amount}
+                  clientEmail={invoice.client_email}
+                  clientName={invoice.client_name}
+                />
+              </CardContent>
+            </Card>
+
+            {flutterwavePublicKey && (
+              <Card>
+                <CardHeader>
+                  <CardTitle>Pay with Flutterwave</CardTitle>
+                </CardHeader>
+                <CardContent>
+                  <FlutterwavePaymentForm
+                    invoiceId={invoice.id}
+                    amount={invoice.total_amount}
+                    clientEmail={invoice.client_email}
+                    clientName={invoice.client_name}
+                    flutterwavePublicKey={flutterwavePublicKey} // Pass the fetched key
+                  />
+                </CardContent>
+              </Card>
+            )}
+          </>
+        )}
+      </div>
+    </main>
   )
 }
