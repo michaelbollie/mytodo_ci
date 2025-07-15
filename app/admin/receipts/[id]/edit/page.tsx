@@ -1,0 +1,72 @@
+import { redirect } from "next/navigation"
+import { getUserSession } from "@/lib/session"
+import { HeaderWrapper } from "@/components/header-wrapper"
+import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card"
+import { ReceiptForm } from "@/components/receipt-form"
+import { Button } from "@/components/ui/button"
+import Link from "next/link"
+import { sql } from "@/lib/db"
+
+async function getReceiptForEdit(id: string) {
+  const [receipt] = await sql`SELECT * FROM receipts WHERE id = ${id}`
+  return receipt
+}
+
+export default async function EditReceiptPage({ params }: { params: { id: string } }) {
+  const session = await getUserSession()
+
+  if (!session || session.userRole !== "admin") {
+    redirect("/login")
+  }
+
+  const receipt = await getReceiptForEdit(params.id)
+
+  if (!receipt) {
+    redirect("/admin/receipts") // Redirect if receipt not found
+  }
+
+  // Format data for the form
+  const initialData = {
+    id: receipt.id,
+    receipt_number: receipt.receipt_number,
+    invoiceId: receipt.invoice_id,
+    paymentDate: new Date(receipt.payment_date),
+    amountPaid: Number.parseFloat(receipt.amount_paid),
+    paymentMethod: receipt.payment_method,
+  }
+
+  return (
+    <div className="flex min-h-screen flex-col">
+      <HeaderWrapper />
+      <main className="flex-1 p-4 md:p-8">
+        <div className="container mx-auto">
+          <div className="flex items-center justify-between mb-6">
+            <h1 className="text-3xl font-bold">Edit Receipt: {receipt.receipt_number}</h1>
+            <Button asChild variant="outline">
+              <Link href="/admin/receipts">Back to All Receipts</Link>
+            </Button>
+          </div>
+          <Card className="max-w-2xl mx-auto">
+            <CardHeader>
+              <CardTitle>Receipt Details</CardTitle>
+            </CardHeader>
+            <CardContent>
+              <ReceiptForm initialData={initialData} />
+            </CardContent>
+          </Card>
+        </div>
+      </main>
+      <footer className="flex flex-col gap-2 sm:flex-row py-6 w-full shrink-0 items-center px-4 md:px-6 border-t">
+        <p className="text-xs text-muted-foreground">&copy; 2024 AfricorexCrm. All rights reserved.</p>
+        <nav className="sm:ml-auto flex gap-4 sm:gap-6">
+          <Link href="#" className="text-xs hover:underline underline-offset-4" prefetch={false}>
+            Terms of Service
+          </Link>
+          <Link href="#" className="text-xs hover:underline underline-offset-4" prefetch={false}>
+            Privacy
+          </Link>
+        </nav>
+      </footer>
+    </div>
+  )
+}
