@@ -1,9 +1,11 @@
-"use client" // This component has client-side interactions, but the data fetching part is server-side.
+"use client"
 
 import { useState } from "react"
+
 import { useRouter } from "next/navigation"
+
 import { redirect } from "next/navigation"
-import { getUserSession } from "@/lib/session" // This is a server-only function
+import { getUserSession } from "@/lib/session"
 import { HeaderWrapper } from "@/components/header-wrapper"
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card"
 import { Button } from "@/components/ui/button"
@@ -23,11 +25,10 @@ import {
 } from "@/components/ui/alert-dialog"
 import { toast } from "@/hooks/use-toast"
 
-// This function is called in the Server Component context
-async function getBackupDetails(id: string, authToken: string | undefined) {
+async function getBackupDetails(id: string) {
   const res = await fetch(`${process.env.NEXT_PUBLIC_APP_URL}/api/admin/zip-backups/${id}`, {
     headers: {
-      Cookie: `auth_token=${authToken}`, // Use the token passed from the server session
+      Cookie: `auth_token=${await (await import("next/headers")).cookies().get("auth_token")?.value}`,
     },
     cache: "no-store",
   })
@@ -38,7 +39,7 @@ async function getBackupDetails(id: string, authToken: string | undefined) {
 }
 
 export default async function AdminBackupDetailPage({ params }: { params: { id: string } }) {
-  const session = await getUserSession() // This is a server-side call
+  const session = await getUserSession()
 
   if (!session || session.userRole !== "admin") {
     redirect("/login")
@@ -47,8 +48,7 @@ export default async function AdminBackupDetailPage({ params }: { params: { id: 
   let backup = null
   let error = ""
   try {
-    // Pass the token from the server session to the fetch function
-    backup = await getBackupDetails(params.id, session.authToken)
+    backup = await getBackupDetails(params.id)
   } catch (err: any) {
     console.error("Error fetching backup details:", err)
     error = err.message || "Could not load backup details."

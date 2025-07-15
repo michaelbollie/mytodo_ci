@@ -5,9 +5,7 @@ import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/com
 import { Button } from "@/components/ui/button"
 import Link from "next/link"
 import { format } from "date-fns"
-import { MpesaPaymentForm } from "@/components/mpesa-payment-form"
-import { FlutterwavePaymentForm } from "@/components/flutterwave-payment-form" // Import the new component
-import { sql } from "@/lib/db" // Import sql to fetch user details
+import { MpesaPaymentForm } from "@/components/mpesa-payment-form" // Import the new component
 
 async function getInvoiceDetails(id: string) {
   const res = await fetch(`${process.env.NEXT_PUBLIC_APP_URL}/api/invoices/${id}`, {
@@ -22,13 +20,6 @@ async function getInvoiceDetails(id: string) {
   return res.json()
 }
 
-async function getUserDetails(userId: string) {
-  // In a real application, you might have a dedicated client-side API route for this
-  // For now, we'll fetch directly from the database (assuming this is a server component)
-  const [user] = await sql`SELECT id, email, name, phone_number FROM users WHERE id = ${userId}`
-  return user
-}
-
 export default async function ClientInvoiceDetailPage({ params }: { params: { id: string } }) {
   const session = await getUserSession()
 
@@ -37,7 +28,6 @@ export default async function ClientInvoiceDetailPage({ params }: { params: { id
   }
 
   let invoice = null
-  let userDetails = null
   let error = ""
   try {
     invoice = await getInvoiceDetails(params.id)
@@ -45,12 +35,8 @@ export default async function ClientInvoiceDetailPage({ params }: { params: { id
     if (invoice && invoice.user_id !== session.userId) {
       redirect("/client/invoices") // Redirect if trying to access another user's invoice
     }
-
-    if (invoice) {
-      userDetails = await getUserDetails(session.userId)
-    }
   } catch (err: any) {
-    console.error("Error fetching invoice details or user details:", err)
+    console.error("Error fetching invoice details:", err)
     error = err.message || "Could not load invoice details."
   }
 
@@ -128,19 +114,11 @@ export default async function ClientInvoiceDetailPage({ params }: { params: { id
                   </CardContent>
                 </Card>
               </div>
-              {invoice.status !== "paid" &&
-                userDetails && ( // Only show payment forms if invoice is not paid and user details are available
-                  <div className="space-y-6">
-                    <MpesaPaymentForm invoiceId={invoice.id} amount={Number.parseFloat(invoice.total_amount)} />
-                    <FlutterwavePaymentForm
-                      invoiceId={invoice.id}
-                      amount={Number.parseFloat(invoice.total_amount)}
-                      userEmail={userDetails.email}
-                      userName={userDetails.name || "Client"}
-                      userPhoneNumber={userDetails.phone_number || undefined}
-                    />
-                  </div>
-                )}
+              {invoice.status !== "paid" && ( // Only show payment form if invoice is not paid
+                <div>
+                  <MpesaPaymentForm invoiceId={invoice.id} amount={Number.parseFloat(invoice.total_amount)} />
+                </div>
+              )}
             </div>
           ) : (
             <p className="text-red-500">Invoice not found.</p>
