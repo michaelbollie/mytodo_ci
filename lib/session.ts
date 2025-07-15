@@ -1,3 +1,4 @@
+import "server-only" // Explicitly mark this file as server-only
 import { cookies } from "next/headers"
 import { verifyAuthToken } from "@/lib/auth"
 

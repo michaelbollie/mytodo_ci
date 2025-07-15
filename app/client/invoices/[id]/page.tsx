@@ -2,12 +2,12 @@ import { redirect } from "next/navigation"
 import { getUserSession } from "@/lib/session"
 import { HeaderWrapper } from "@/components/header-wrapper"
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card"
-import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from "@/components/ui/table"
-import { format } from "date-fns"
 import { Button } from "@/components/ui/button"
 import Link from "next/link"
+import { format } from "date-fns"
 import { MpesaPaymentForm } from "@/components/mpesa-payment-form"
-import { FlutterwavePaymentForm } from "@/components/flutterwave-payment-form"
+import { FlutterwavePaymentForm } from "@/components/flutterwave-payment-form" // Import the new component
+import { sql } from "@/lib/db" // Import sql to fetch user details
 
 async function getInvoiceDetails(id: string) {
   const res = await fetch(`${process.env.NEXT_PUBLIC_APP_URL}/api/invoices/${id}`, {
@@ -22,22 +22,11 @@ async function getInvoiceDetails(id: string) {
   return res.json()
 }
 
-async function getFlutterwavePublicKey() {
-  try {
-    const res = await fetch(`${process.env.NEXT_PUBLIC_APP_URL}/api/config/flutterwave-public-key`, {
-      cache: "no-store", // Ensure fresh data
-    })
-    if (!res.ok) {
-      const errorData = await res.json()
-      console.error("Failed to fetch Flutterwave public key:", errorData.message || res.statusText)
-      return null
-    }
-    const data = await res.json()
-    return data.publicKey
-  } catch (error) {
-    console.error("Error fetching Flutterwave public key:", error)
-    return null
-  }
+async function getUserDetails(userId: string) {
+  // In a real application, you might have a dedicated client-side API route for this
+  // For now, we'll fetch directly from the database (assuming this is a server component)
+  const [user] = await sql`SELECT id, email, name, phone_number FROM users WHERE id = ${userId}`
+  return user
 }
 
 export default async function ClientInvoiceDetailPage({ params }: { params: { id: string } }) {
@@ -48,15 +37,22 @@ export default async function ClientInvoiceDetailPage({ params }: { params: { id
   }
 
   let invoice = null
+  let userDetails = null
   let error = ""
   try {
     invoice = await getInvoiceDetails(params.id)
+    // Additional client-side check to ensure the invoice belongs to the user
+    if (invoice && invoice.user_id !== session.userId) {
+      redirect("/client/invoices") // Redirect if trying to access another user's invoice
+    }
+
+    if (invoice) {
+      userDetails = await getUserDetails(session.userId)
+    }
   } catch (err: any) {
-    console.error("Error fetching invoice details for client:", err)
+    console.error("Error fetching invoice details or user details:", err)
     error = err.message || "Could not load invoice details."
   }
-
-  const flutterwavePublicKey = await getFlutterwavePublicKey()
 
   if (!invoice && !error) {
     return (
@@ -78,7 +74,7 @@ export default async function ClientInvoiceDetailPage({ params }: { params: { id
       <main className="flex-1 p-4 md:p-8">
         <div className="container mx-auto">
           <div className="flex items-center justify-between mb-6">
-            <h1 className="text-3xl font-bold">Invoice: {invoice?.invoice_number}</h1>
+            <h1 className="text-3xl font-bold">Invoice Details: {invoice?.invoice_number}</h1>
             <Button asChild variant="outline">
               <Link href="/client/invoices">Back to Invoices</Link>
             </Button>
@@ -90,30 +86,10 @@ export default async function ClientInvoiceDetailPage({ params }: { params: { id
               <div className="lg:col-span-2">
                 <Card>
                   <CardHeader>
-                    <CardTitle>Invoice Details</CardTitle>
-                    <CardDescription>Information about invoice {invoice.invoice_number}</CardDescription>
+                    <CardTitle>Invoice #{invoice.invoice_number}</CardTitle>
+                    <CardDescription>Issued on {format(new Date(invoice.issue_date), "PPP")}</CardDescription>
                   </CardHeader>
                   <CardContent className="grid gap-4">
-                    <div className="grid grid-cols-2 gap-2">
-                      <div>
-                        <p className="text-sm text-muted-foreground">Invoice Number</p>
-                        <p className="text-lg font-semibold">{invoice.invoice_number}</p>
-                      </div>
-                      <div>
-                        <p className="text-sm text-muted-foreground">Client Name</p>
-                        <p className="text-lg font-semibold">{invoice.client_name}</p>
-                      </div>
-                    </div>
-                    <div className="grid grid-cols-2 gap-2">
-                      <div>
-                        <p className="text-sm text-muted-foreground">Issue Date</p>
-                        <p className="text-lg font-semibold">{format(new Date(invoice.issue_date), "PPP")}</p>
-                      </div>
-                      <div>
-                        <p className="text-sm text-muted-foreground">Due Date</p>
-                        <p className="text-lg font-semibold">{format(new Date(invoice.due_date), "PPP")}</p>
-                      </div>
-                    </div>
                     <div className="grid grid-cols-2 gap-2">
                       <div>
                         <p className="text-sm text-muted-foreground">Total Amount</p>
@@ -121,77 +97,50 @@ export default async function ClientInvoiceDetailPage({ params }: { params: { id
                       </div>
                       <div>
                         <p className="text-sm text-muted-foreground">Status</p>
-                        <p className="text-lg font-semibold capitalize">{invoice.status}</p>
+                        <p className="text-lg font-semibold">
+                          <span
+                            className={`px-2 py-1 rounded-full text-sm font-semibold ${
+                              invoice.status === "paid"
+                                ? "bg-green-100 text-green-800"
+                                : invoice.status === "sent"
+                                  ? "bg-blue-100 text-blue-800"
+                                  : invoice.status === "overdue"
+                                    ? "bg-red-100 text-red-800"
+                                    : "bg-gray-100 text-gray-800"
+                            }`}
+                          >
+                            {invoice.status.charAt(0).toUpperCase() + invoice.status.slice(1)}
+                          </span>
+                        </p>
                       </div>
                     </div>
-                    {invoice.notes && (
+                    {invoice.due_date && (
                       <div>
-                        <p className="text-sm text-muted-foreground">Notes</p>
-                        <p className="text-lg font-semibold whitespace-pre-wrap">{invoice.notes}</p>
+                        <p className="text-sm text-muted-foreground">Due Date</p>
+                        <p className="text-lg font-semibold">{format(new Date(invoice.due_date), "PPP")}</p>
                       </div>
                     )}
-
-                    {invoice.items && invoice.items.length > 0 && (
-                      <div className="mt-4">
-                        <h3 className="text-lg font-semibold mb-2">Items</h3>
-                        <Table>
-                          <TableHeader>
-                            <TableRow>
-                              <TableHead>Description</TableHead>
-                              <TableHead className="text-right">Quantity</TableHead>
-                              <TableHead className="text-right">Unit Price</TableHead>
-                              <TableHead className="text-right">Total</TableHead>
-                            </TableRow>
-                          </TableHeader>
-                          <TableBody>
-                            {invoice.items.map((item: any, index: number) => (
-                              <TableRow key={index}>
-                                <TableCell>{item.description}</TableCell>
-                                <TableCell className="text-right">{item.quantity}</TableCell>
-                                <TableCell className="text-right">${item.unit_price.toFixed(2)}</TableCell>
-                                <TableCell className="text-right">
-                                  ${(item.quantity * item.unit_price).toFixed(2)}
-                                </TableCell>
-                              </TableRow>
-                            ))}
-                          </TableBody>
-                        </Table>
-                      </div>
-                    )}
+                    <div>
+                      <p className="text-sm text-muted-foreground">Client ID</p>
+                      <p className="text-lg font-semibold">{invoice.user_id}</p>
+                    </div>
+                    {/* Add more invoice details here as needed */}
                   </CardContent>
                 </Card>
               </div>
-              <div className="lg:col-span-1 space-y-6">
-                {invoice.status === "pending" && (
-                  <>
-                    <MpesaPaymentForm
+              {invoice.status !== "paid" &&
+                userDetails && ( // Only show payment forms if invoice is not paid and user details are available
+                  <div className="space-y-6">
+                    <MpesaPaymentForm invoiceId={invoice.id} amount={Number.parseFloat(invoice.total_amount)} />
+                    <FlutterwavePaymentForm
                       invoiceId={invoice.id}
-                      amount={invoice.total_amount}
-                      userEmail={session?.email || ""}
-                      userPhoneNumber={session?.phoneNumber || ""}
+                      amount={Number.parseFloat(invoice.total_amount)}
+                      userEmail={userDetails.email}
+                      userName={userDetails.name || "Client"}
+                      userPhoneNumber={userDetails.phone_number || undefined}
                     />
-                    {flutterwavePublicKey ? (
-                      <FlutterwavePaymentForm
-                        invoiceId={invoice.id}
-                        amount={invoice.total_amount}
-                        userEmail={session?.email || ""}
-                        userName={session?.name || ""}
-                        userPhoneNumber={session?.phoneNumber || ""}
-                        flutterwavePublicKey={flutterwavePublicKey} // Pass the key as a prop
-                      />
-                    ) : (
-                      <Card>
-                        <CardHeader>
-                          <CardTitle className="text-red-500">Flutterwave Not Available</CardTitle>
-                          <CardDescription>
-                            Flutterwave payment gateway is currently unavailable. Please check configuration.
-                          </CardDescription>
-                        </CardHeader>
-                      </Card>
-                    )}
-                  </>
+                  </div>
                 )}
-              </div>
             </div>
           ) : (
             <p className="text-red-500">Invoice not found.</p>
