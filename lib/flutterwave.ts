@@ -1,9 +1,10 @@
-const FLUTTERWAVE_PUBLIC_KEY = process.env.NEXT_PUBLIC_FLUTTERWAVE_PUBLIC_KEY || ""
+import "server-only" // Mark this module as server-only [^1][^2]
+
 const FLUTTERWAVE_SECRET_KEY = process.env.FLUTTERWAVE_SECRET_KEY || ""
 const FLUTTERWAVE_API_BASE_URL = "https://api.flutterwave.com/v3"
 
-if (!FLUTTERWAVE_PUBLIC_KEY || !FLUTTERWAVE_SECRET_KEY) {
-  console.warn("Flutterwave environment variables are not fully configured. Payments module may not function.")
+if (!FLUTTERWAVE_SECRET_KEY) {
+  console.warn("Flutterwave secret key is not configured. Payments module may not function correctly.")
 }
 
 interface InitiatePaymentPayload {
@@ -86,8 +87,4 @@ export async function verifyFlutterwavePayment(transactionId: string): Promise<V
   }
 
   return response.json()
-}
-
-export function getFlutterwavePublicKey(): string {
-  return FLUTTERWAVE_PUBLIC_KEY
 }

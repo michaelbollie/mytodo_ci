@@ -1,7 +1,7 @@
 "use client"
 
 import type React from "react"
-import { useState } from "react"
+import { useState, useEffect } from "react"
 import { Button } from "@/components/ui/button"
 import { Input } from "@/components/ui/input"
 import { Label } from "@/components/ui/label"
@@ -29,7 +29,31 @@ export function FlutterwavePaymentForm({
   const [loading, setLoading] = useState(false)
   const [message, setMessage] = useState("")
   const [isError, setIsError] = useState(false)
+  const [flutterwavePublicKey, setFlutterwavePublicKey] = useState<string | null>(null)
+  const [keyLoading, setKeyLoading] = useState(true)
   const router = useRouter()
+
+  useEffect(() => {
+    const fetchPublicKey = async () => {
+      try {
+        const response = await fetch("/api/config/flutterwave-public-key")
+        const data = await response.json()
+        if (response.ok && data.publicKey) {
+          setFlutterwavePublicKey(data.publicKey)
+        } else {
+          setMessage(data.message || "Failed to load Flutterwave public key.")
+          setIsError(true)
+        }
+      } catch (err) {
+        console.error("Error fetching Flutterwave public key:", err)
+        setMessage("An error occurred while loading payment configuration.")
+        setIsError(true)
+      } finally {
+        setKeyLoading(false)
+      }
+    }
+    fetchPublicKey()
+  }, [])
 
   const handleSubmit = async (e: React.FormEvent) => {
     e.preventDefault()
@@ -39,6 +63,13 @@ export function FlutterwavePaymentForm({
 
     if (!amount || amount <= 0 || !userEmail || !userName) {
       setMessage("Payment details (amount, email, name) are incomplete.")
+      setIsError(true)
+      setLoading(false)
+      return
+    }
+
+    if (!flutterwavePublicKey) {
+      setMessage("Flutterwave public key not loaded. Please try again.")
       setIsError(true)
       setLoading(false)
       return
@@ -81,6 +112,37 @@ export function FlutterwavePaymentForm({
     }
   }
 
+  if (keyLoading) {
+    return (
+      <Card>
+        <CardHeader>
+          <CardTitle>Loading Payment Options</CardTitle>
+          <CardDescription>Please wait while we load the payment gateway.</CardDescription>
+        </CardHeader>
+        <CardContent className="flex justify-center items-center h-24">
+          <Loader2 className="h-8 w-8 animate-spin text-gray-500" />
+        </CardContent>
+      </Card>
+    )
+  }
+
+  if (isError && !flutterwavePublicKey) {
+    return (
+      <Card>
+        <CardHeader>
+          <CardTitle className="text-red-500">Payment Error</CardTitle>
+          <CardDescription>
+            There was an issue loading the payment gateway. Please ensure your environment variables are correctly
+            configured.
+          </CardDescription>
+        </CardHeader>
+        <CardContent>
+          <p className="text-sm text-red-500">{message}</p>
+        </CardContent>
+      </Card>
+    )
+  }
+
   return (
     <Card>
       <CardHeader>
@@ -108,7 +170,7 @@ export function FlutterwavePaymentForm({
             </div>
           )}
           {message && <p className={`text-sm ${isError ? "text-red-500" : "text-green-500"}`}>{message}</p>}
-          <Button type="submit" className="w-full" disabled={loading}>
+          <Button type="submit" className="w-full" disabled={loading || !flutterwavePublicKey}>
             {loading ? (
               <>
                 <Loader2 className="mr-2 h-4 w-4 animate-spin" />
